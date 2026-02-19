@@ -23,8 +23,10 @@ impl OutputParser {
     pub fn new() -> Self {
         Self {
             prompt_patterns: vec![
-                // Claude Code プロンプト
-                Regex::new(r"[❯>]\s*$").unwrap(),
+                // Claude Code プロンプト（❯ が含まれている行）
+                Regex::new(r"❯").unwrap(),
+                // 一般的なプロンプト（> で終わる行）
+                Regex::new(r">\s*$").unwrap(),
                 // 追加入力待ち（継続行）
                 Regex::new(r"\.\.\.\s*$").unwrap(),
             ],
@@ -92,34 +94,34 @@ impl OutputParser {
             return AgentStatus::Unknown;
         }
 
-        // 1. まず処理中かチェック（スピナーやThinking等の検出）
-        if self.is_processing(content_trimmed) {
-            return AgentStatus::Processing;
-        }
-
-        // 2. プロンプトが表示されているか（入力待ち状態）
+        // 1. まずプロンプトがあるかチェック（プロンプトがあれば入力待ち）
         let has_prompt = self.has_prompt(content_trimmed);
 
         if has_prompt {
             // プロンプトの直前の出力を取得
             let last_output = self.extract_last_output(content_trimmed);
 
-            // 3. エラーチェック
+            // 2. エラーチェック
             if let Some(error_msg) = self.detect_error(&last_output) {
                 return AgentStatus::Error {
                     message: error_msg,
                 };
             }
 
-            // 4. 質問チェック
+            // 3. 質問チェック
             if self.is_question(&last_output) {
                 return AgentStatus::WaitingForInput {
                     question: last_output.lines().last().unwrap_or(&last_output).to_string(),
                 };
             }
 
-            // 5. 完了と判定（プロンプトがあるが質問でもエラーでもない）
+            // 4. 完了と判定（プロンプトがあるが質問でもエラーでもない）
             return AgentStatus::Idle;
+        }
+
+        // 5. プロンプトがない場合、処理中かチェック
+        if self.is_processing(content_trimmed) {
+            return AgentStatus::Processing;
         }
 
         // 6. プロンプトがなく、処理中でもない → まだ処理中とみなす
@@ -161,9 +163,10 @@ impl OutputParser {
 
     /// プロンプトが表示されているか
     fn has_prompt(&self, content: &str) -> bool {
-        // 最後の行がプロンプトかチェック
-        if let Some(last_line) = content.lines().last() {
-            let trimmed = last_line.trim();
+        // 最後の数行をチェック（Claude CodeのUIでは ❯ の下に余分な行がある場合がある）
+        let last_lines: Vec<&str> = content.lines().rev().take(5).collect();
+        for line in &last_lines {
+            let trimmed = line.trim();
             for pattern in &self.prompt_patterns {
                 if pattern.is_match(trimmed) {
                     return true;

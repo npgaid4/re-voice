@@ -1,4 +1,5 @@
 mod acp;
+mod log;
 mod pty;
 
 use chrono;
@@ -617,6 +618,12 @@ fn tmux_is_polling(state: State<AppState>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ロガーを初期化
+    if let Err(e) = log::init_logger() {
+        eprintln!("Failed to initialize logger: {}", e);
+    }
+    log::info("APP", "Application starting");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())

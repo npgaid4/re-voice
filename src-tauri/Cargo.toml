@@ -33,4 +33,5 @@ regex = "1"
 thiserror = "2"
 futures = "0.3"
 ansi-parser = "0.9"
+lazy_static = "1.4"
 

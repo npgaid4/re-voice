@@ -4400,6 +4400,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "lazy_static",
  "parking_lot",
  "portable-pty",
  "regex",

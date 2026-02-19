@@ -13,14 +13,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 YouTubeの外国語動画を日本語吹替版に変換するTauriデスクトップアプリ。
 
+## 開発ツール
+pnpm
+
 ## 開発コマンド
 
 ```bash
 # 開発サーバー起動
-npm run tauri dev
+pnpm tauri dev
 
 # ビルド
-npm run tauri build
+pnpm tauri build
 
 # Rustのみチェック
 cd src-tauri && cargo check

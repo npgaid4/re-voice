@@ -13,7 +13,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use super::parser::OutputParser;
-use super::tmux::{AgentStatus, AgentType, PaneInfo, TmuxOrchestrator};
+use super::tmux::{AgentStatus, PaneInfo, TmuxOrchestrator};
+use crate::log;
 
 /// ポーリング設定
 #[derive(Debug, Clone)]
@@ -97,7 +98,7 @@ impl StatusPoller {
         let parser = OutputParser::new();
 
         let handle = thread::spawn(move || {
-            eprintln!("[StatusPoller] Started with interval {}ms", config.interval_ms);
+            log::info("StatusPoller", &format!("Started with interval {}ms", config.interval_ms));
 
             while running.load(Ordering::SeqCst) {
                 // オーケストレーターからエージェント一覧を取得
@@ -122,13 +123,27 @@ impl StatusPoller {
                     };
 
                     if let Some(content) = pane_content {
+                        // デバッグ: 最後の5行を表示
+                        let last_lines: Vec<&str> = content.lines().rev().take(5).collect();
+                        log::debug("StatusPoller", &format!("Agent {} last 5 lines:", agent.agent_id));
+                        for line in &last_lines {
+                            log::debug("StatusPoller", &format!("  {:?}", line));
+                        }
+
                         // パーサーで状態を検出
                         let detected_status = parser.parse(&content);
+                        log::debug("StatusPoller", &format!("Agent {} detected_status: {:?}", agent.agent_id, detected_status));
 
-                        // 前回の状態と比較
-                        let status_changed = {
+                        // 前回の状態と比較（更新前の状態を保存）
+                        let (status_changed, old_status) = {
                             let mut snaps = snapshots.lock();
                             let prev = snaps.get(&agent.agent_id);
+
+                            // 更新前の状態を保存
+                            let old_status = match prev {
+                                Some(prev) => prev.status.clone(),
+                                None => AgentStatus::Unknown,
+                            };
 
                             let changed = match prev {
                                 Some(prev) => {
@@ -149,18 +164,20 @@ impl StatusPoller {
                                 },
                             );
 
-                            changed
+                            (changed, old_status)
                         };
 
                         // イベントを発火
                         if status_changed {
-                            let old_status_str = match &agent.status {
-                                AgentStatus::Initializing => "Initializing",
-                                AgentStatus::Processing => "Processing",
-                                AgentStatus::Idle => "Idle",
-                                AgentStatus::WaitingForInput { .. } => "WaitingForInput",
-                                AgentStatus::Error { .. } => "Error",
-                                AgentStatus::Unknown => "Unknown",
+                            let old_status_str = match &old_status {
+                                AgentStatus::Initializing => "Initializing".to_string(),
+                                AgentStatus::Processing => "Processing".to_string(),
+                                AgentStatus::Idle => "Idle".to_string(),
+                                AgentStatus::WaitingForInput { question } => {
+                                    format!("WaitingForInput:{}", question)
+                                }
+                                AgentStatus::Error { message } => format!("Error:{}", message),
+                                AgentStatus::Unknown => "Unknown".to_string(),
                             };
 
                             let new_status_str = match &detected_status {
@@ -177,12 +194,12 @@ impl StatusPoller {
                             // 状態変化イベント
                             let payload = StatusChangedPayload {
                                 agent_id: agent.agent_id.clone(),
-                                old_status: old_status_str.to_string(),
+                                old_status: old_status_str.clone(),
                                 new_status: new_status_str.to_string(),
                             };
 
                             if let Err(e) = app_handle.emit("tmux:status_changed", &payload) {
-                                eprintln!("[StatusPoller] Failed to emit status_changed: {:?}", e);
+                                log::error("StatusPoller", &format!("Failed to emit status_changed: {:?}", e));
                             }
 
                             // 出力準備完了イベント（状態がIdleまたはWaitingForInputに変化した場合）
@@ -194,13 +211,13 @@ impl StatusPoller {
                                 };
 
                                 if let Err(e) = app_handle.emit("tmux:output_ready", &output_payload) {
-                                    eprintln!("[StatusPoller] Failed to emit output_ready: {:?}", e);
+                                    log::error("StatusPoller", &format!("Failed to emit output_ready: {:?}", e));
                                 }
                             }
 
-                            eprintln!(
-                                "[StatusPoller] Agent {} status: {} -> {}",
-                                agent.agent_id, old_status_str, new_status_str
+                            log::info(
+                                "StatusPoller",
+                                &format!("Agent {} status: {} -> {}", agent.agent_id, old_status_str, new_status_str)
                             );
                         }
                     }
@@ -210,7 +227,7 @@ impl StatusPoller {
                 thread::sleep(Duration::from_millis(config.interval_ms));
             }
 
-            eprintln!("[StatusPoller] Stopped");
+            log::info("StatusPoller", "Stopped");
         });
 
         self.handle = Some(handle);
