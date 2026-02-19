@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(node:*)",
+      "Bash(npm --version:*)",
+      "Bash(~/.cargo/bin/cargo:*)",
+      "Bash(curl:*)",
+      "Bash(sh -s -- -y)",
+      "Bash(source:*)",
+      "Bash(rustc:*)",
+      "Bash(pnpm:*)",
+      "Bash(/bin/bash:*)",
+      "Bash(~/.zshrc)",
+      "Bash(pgrep:*)",
+      "Bash(ls:*)",
+      "Bash(export:*)",
+      "Bash(pkill:*)",
+      "Bash(brew:*)",
+      "Bash(yt-dlp:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git push:*)",
+      "WebSearch",
+      "Bash(/opt/homebrew/bin/cargo check:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs kill:*)",
+      "Bash(npx tsc:*)",
+      "Bash(echo:*)",
+      "Bash($HOME/.cargo/bin/cargo check:*)",
+      "Bash($HOME/.cargo/bin/cargo doc:*)",
+      "Bash(PATH=\"$HOME/.cargo/bin:$PATH\" cargo check:*)",
+      "Bash(/Users/eiji/.cargo/bin/cargo check:*)",
+      "Bash(tmux:*)",
+      "Bash(/opt/homebrew/bin/tmux:*)"
+    ]
+  }
+}

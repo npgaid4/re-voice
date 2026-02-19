@@ -1,10 +1,13 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+日本語を使用すること。
 
 ## 作業開始前に必ず読む
 
-**`handover.md`** を参照して、プロジェクトの要件と決定事項を確認してください。
+- **`docs/handover.md`** - プロジェクトの要件と決定事項
+- **`docs/coding.md`** - 実装詳細、未実装機能、技術的課題
+- **`docs/acp-design-v2-tmux.md`** - ACP v2設計（tmuxベース）
 
 ## プロジェクト概要
 

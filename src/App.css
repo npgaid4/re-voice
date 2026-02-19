@@ -197,6 +197,141 @@ button:disabled {
   border-bottom: none;
 }
 
+/* セクションカード */
+.section-card {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.section-card h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: #1e40af;
+}
+
+.section-card h3 {
+  margin: 1rem 0 0.5rem 0;
+  font-size: 1rem;
+  color: #374151;
+}
+
+.section-card h4 {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+/* 成功状態のボタン */
+button.btn-success {
+  background-color: #22c55e;
+}
+
+button.btn-success:hover:not(:disabled) {
+  background-color: #16a34a;
+}
+
+/* ACPパネル（後方互換用） */
+.acp-panel {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.acp-panel h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: #1e40af;
+}
+
+.acp-panel h3 {
+  margin: 1rem 0 0.5rem 0;
+  font-size: 1rem;
+  color: #374151;
+}
+
+.acp-panel h4 {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+.agent-list {
+  margin-bottom: 1rem;
+}
+
+.agent-list.discovered {
+  background-color: #ecfdf5;
+  border: 1px solid #10b981;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-top: 1rem;
+}
+
+.agent-list.discovered h3 {
+  color: #059669;
+  margin-top: 0;
+}
+
+.agent-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.agent-list li {
+  padding: 0.75rem;
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.agent-list li:last-child {
+  margin-bottom: 0;
+}
+
+.agent-list small {
+  color: #6b7280;
+}
+
+.translation-section {
+  margin-top: 1rem;
+}
+
+.translation-section textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+  margin-bottom: 0.5rem;
+}
+
+.translation-section textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.translation-result {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #ecfdf5;
+  border: 1px solid #10b981;
+  border-radius: 8px;
+}
+
+.translation-result p {
+  margin: 0;
+  color: #065f46;
+}
+
 /* ダークモード */
 @media (prefers-color-scheme: dark) {
   :root {
@@ -231,5 +366,252 @@ button:disabled {
 
   .output-log {
     background-color: #111827;
+  }
+
+  .section-card {
+    background-color: #1f2937;
+    border-color: #374151;
+  }
+
+  .section-card h2 {
+    color: #60a5fa;
+  }
+
+  .section-card h3 {
+    color: #e5e7eb;
+  }
+
+  .section-card h4 {
+    color: #9ca3af;
+  }
+
+  .acp-panel {
+    background-color: #1f2937;
+    border-color: #374151;
+  }
+
+  .acp-panel h2 {
+    color: #60a5fa;
+  }
+
+  .acp-panel h3 {
+    color: #e5e7eb;
+  }
+
+  .acp-panel h4 {
+    color: #9ca3af;
+  }
+
+  .agent-list li {
+    background-color: #374151;
+    border-color: #4b5563;
+  }
+
+  .agent-list small {
+    color: #9ca3af;
+  }
+
+  .translation-section textarea {
+    background-color: #374151;
+    border-color: #4b5563;
+    color: #f6f6f6;
+  }
+
+  .translation-section textarea:focus {
+    border-color: #60a5fa;
+  }
+
+  .translation-result {
+    background-color: #064e3b;
+    border-color: #059669;
+  }
+
+  .translation-result p {
+    color: #a7f3d0;
+  }
+}
+
+/* 入力要求ダイアログ */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  background-color: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dialog h3 {
+  margin: 0 0 1rem 0;
+  color: #dc2626;
+  font-size: 1.25rem;
+}
+
+.dialog-type {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  background-color: #fef2f2;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.dialog-context {
+  margin-bottom: 1rem;
+}
+
+.dialog-context pre {
+  background-color: #f3f4f6;
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dialog-input {
+  margin-bottom: 1rem;
+}
+
+.dialog-input input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.dialog-input input:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.dialog-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.dialog-buttons button {
+  padding: 0.5rem 1rem;
+}
+
+.btn-secondary {
+  background-color: #6b7280;
+}
+
+.btn-secondary:hover {
+  background-color: #4b5563;
+}
+
+/* tmuxテストセクション */
+.tmux-test {
+  border-color: #8b5cf6;
+}
+
+.tmux-test h2 {
+  color: #7c3aed;
+}
+
+.tmux-test .input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tmux-test .input-row input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.tmux-test .input-row input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.tmux-test .tmux-output {
+  background-color: #1f2937;
+  color: #e5e7eb;
+  padding: 1rem;
+  border-radius: 8px;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tmux-test .hint {
+  text-align: center;
+  padding: 0.75rem;
+  background-color: #f3f4f6;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.tmux-test .hint code {
+  background-color: #e5e7eb;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-family: "Monaco", "Menlo", monospace;
+}
+
+button.btn-danger {
+  background-color: #dc2626;
+}
+
+button.btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+/* ダークモードでのtmuxセクション */
+@media (prefers-color-scheme: dark) {
+  .tmux-test {
+    border-color: #6d28d9;
+  }
+
+  .tmux-test h2 {
+    color: #a78bfa;
+  }
+
+  .tmux-test .input-row input {
+    background-color: #374151;
+    border-color: #4b5563;
+    color: #f6f6f6;
+  }
+
+  .tmux-test .input-row input:focus {
+    border-color: #8b5cf6;
+  }
+
+  .tmux-test .hint {
+    background-color: #374151;
+    color: #9ca3af;
+  }
+
+  .tmux-test .hint code {
+    background-color: #4b5563;
   }
 }
