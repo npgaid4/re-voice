@@ -28,7 +28,7 @@ pub struct PollerConfig {
 impl Default for PollerConfig {
     fn default() -> Self {
         Self {
-            interval_ms: 500,
+            interval_ms: 200,  // 200ms間隔でポーリング（Processing状態の検出を改善）
             min_output_change: 10,
         }
     }

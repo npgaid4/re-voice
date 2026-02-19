@@ -94,62 +94,62 @@ impl OutputParser {
             return AgentStatus::Unknown;
         }
 
-        // 1. まずプロンプトがあるかチェック（プロンプトがあれば入力待ち）
+        // 1. 全体的にProcessingパターンがあるかチェック（スピナー、Thinking等）
+        if self.is_processing(content_trimmed) {
+            return AgentStatus::Processing;
+        }
+
+        // 2. プロンプトがあるかチェック
         let has_prompt = self.has_prompt(content_trimmed);
 
         if has_prompt {
             // プロンプトの直前の出力を取得
             let last_output = self.extract_last_output(content_trimmed);
 
-            // 2. エラーチェック
+            // 3. エラーチェック
             if let Some(error_msg) = self.detect_error(&last_output) {
                 return AgentStatus::Error {
                     message: error_msg,
                 };
             }
 
-            // 3. 質問チェック
+            // 4. 質問チェック
             if self.is_question(&last_output) {
                 return AgentStatus::WaitingForInput {
                     question: last_output.lines().last().unwrap_or(&last_output).to_string(),
                 };
             }
 
-            // 4. 完了と判定（プロンプトがあるが質問でもエラーでもない）
+            // 5. 完了と判定（プロンプトがあるが質問でもエラーでもない）
             return AgentStatus::Idle;
         }
 
-        // 5. プロンプトがない場合、処理中かチェック
-        if self.is_processing(content_trimmed) {
-            return AgentStatus::Processing;
-        }
-
-        // 6. プロンプトがなく、処理中でもない → まだ処理中とみなす
+        // 6. プロンプトがなく、Processingパターンもない → まだ処理中とみなす
         AgentStatus::Processing
     }
 
-    /// 処理中かどうかを判定
+    /// 処理中かどうかを判定（より厳密に）
     fn is_processing(&self, content: &str) -> bool {
-        // スピナーパターンの検出
-        for pattern in &self.spinner_patterns {
-            if pattern.is_match(content) {
-                return true;
-            }
-        }
+        // 最後の10行をチェック
+        let last_lines: Vec<&str> = content.lines().rev().take(10).collect();
 
-        // Processingパターンの検出
-        for pattern in &self.processing_patterns {
-            if pattern.is_match(content) {
-                return true;
-            }
-        }
-
-        // 最後の数行をチェック（スピナーは最後の行にあることが多い）
-        let last_lines: Vec<&str> = content.lines().rev().take(3).collect();
-        for line in last_lines {
+        for line in &last_lines {
             let trimmed = line.trim();
-            // 短い行で特定のパターンがある場合は処理中
-            if trimmed.len() < 50 {
+
+            // 空行や罫線のみの行はスキップ
+            if trimmed.is_empty() || trimmed.starts_with('─') || trimmed.starts_with('═') {
+                continue;
+            }
+
+            // Processingパターンの検出（行全体がパターンにマッチする場合のみ）
+            for pattern in &self.processing_patterns {
+                if pattern.is_match(trimmed) {
+                    return true;
+                }
+            }
+
+            // スピナーパターンの検出（短い行で、かつ明確なスピナー文字を含む場合のみ）
+            if trimmed.len() < 30 {
                 for pattern in &self.spinner_patterns {
                     if pattern.is_match(trimmed) {
                         return true;
