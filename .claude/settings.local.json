@@ -36,7 +36,17 @@
       "Bash(PATH=\"$HOME/.cargo/bin:$PATH\" cargo check:*)",
       "Bash(/Users/eiji/.cargo/bin/cargo check:*)",
       "Bash(tmux:*)",
-      "Bash(/opt/homebrew/bin/tmux:*)"
+      "Bash(/opt/homebrew/bin/tmux:*)",
+      "Bash(/bin/ls:*)",
+      "Bash(/bin/cat:*)",
+      "Bash(/opt/homebrew/bin/pnpm tauri dev:*)",
+      "Bash(/Users/eiji/.cargo/bin/cargo test:*)",
+      "Bash(claude:*)",
+      "Bash(unset:*)",
+      "Bash(grep:*)",
+      "Bash(# バックグラウンドタスクのログを確認 cat /private/tmp/claude-501/-Users-eiji-dev-aiapp-re-voice/tasks/b662a0f.output)",
+      "Bash(true export PATH=\"$HOME/.cargo/bin:$PATH\" cd /Users/eiji/dev/aiapp/re-voice/src-tauri cargo test --lib subtitle)",
+      "Bash(true:*)"
     ]
   }
 }

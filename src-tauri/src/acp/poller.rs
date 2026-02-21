@@ -50,6 +50,15 @@ pub struct OutputReadyPayload {
     pub content_length: usize,
 }
 
+/// 質問イベントのペイロード
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionPayload {
+    pub agent_id: String,
+    pub question: String,
+    pub question_id: String,
+    pub context: String,
+}
+
 /// エージェント状態のスナップショット
 #[derive(Debug, Clone)]
 struct AgentSnapshot {
@@ -123,15 +132,31 @@ impl StatusPoller {
                     };
 
                     if let Some(content) = pane_content {
-                        // デバッグ: 最後の5行を表示
-                        let last_lines: Vec<&str> = content.lines().rev().take(5).collect();
-                        log::debug("StatusPoller", &format!("Agent {} last 5 lines:", agent.agent_id));
-                        for line in &last_lines {
+                        // デバッグ: コンテンツ全体の行数と最後の10行を表示
+                        let total_lines = content.lines().count();
+                        let last_lines: Vec<&str> = content.lines().rev().take(10).collect();
+                        log::debug("StatusPoller", &format!("Agent {} captured {} lines, last 10 lines:", agent.agent_id, total_lines));
+                        for line in last_lines.iter().rev() {
                             log::debug("StatusPoller", &format!("  {:?}", line));
                         }
 
                         // パーサーで状態を検出
-                        let detected_status = parser.parse(&content);
+                        let mut detected_status = parser.parse(&content);
+
+                        // 選択メニューが表示されている場合はWaitingForInputとして扱う
+                        if content.contains("Enter to select") || content.contains("↑/↓ to navigate") {
+                            log::debug("StatusPoller", &format!("Agent {} has selection menu, forcing WaitingForInput", agent.agent_id));
+                            // 選択肢を抽出
+                            let options = extract_selection_options(&content);
+                            detected_status = AgentStatus::WaitingForInput {
+                                question: if options.is_empty() {
+                                    "選択してください".to_string()
+                                } else {
+                                    options
+                                },
+                            };
+                        }
+
                         log::debug("StatusPoller", &format!("Agent {} detected_status: {:?}", agent.agent_id, detected_status));
 
                         // 前回の状態と比較（更新前の状態を保存）
@@ -215,6 +240,26 @@ impl StatusPoller {
                                 }
                             }
 
+                            // 質問イベント（WaitingForInputに変化した場合）
+                            if let AgentStatus::WaitingForInput { question } = &detected_status {
+                                // 前回の状態がWaitingForInputでない場合のみ通知
+                                let was_waiting = matches!(old_status, AgentStatus::WaitingForInput { .. });
+                                if !was_waiting {
+                                    let question_payload = QuestionPayload {
+                                        agent_id: agent.agent_id.clone(),
+                                        question: question.clone(),
+                                        question_id: format!("q-{}-{}", agent.agent_id, chrono::Utc::now().timestamp()),
+                                        context: parser.extract_meaningful_content(&content),
+                                    };
+
+                                    if let Err(e) = app_handle.emit("tmux:question", &question_payload) {
+                                        log::error("StatusPoller", &format!("Failed to emit question: {:?}", e));
+                                    }
+
+                                    log::info("StatusPoller", &format!("Agent {} asked: {}", agent.agent_id, question));
+                                }
+                            }
+
                             log::info(
                                 "StatusPoller",
                                 &format!("Agent {} status: {} -> {}", agent.agent_id, old_status_str, new_status_str)
@@ -280,6 +325,167 @@ impl Drop for StatusPoller {
     }
 }
 
+/// 選択肢を抽出する（"Enter to select"の前の選択肢行を探す）
+/// 問題文と選択肢を返す（改行区切り）
+/// フォーマット: "問題文\n---\n1. 選択肢1\n2. 選択肢2..."
+fn extract_selection_options(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut options: Vec<(u32, String)> = Vec::new(); // (番号, 選択肢)
+    let mut first_option_index: Option<usize> = None;
+
+    log::debug("extract_selection_options", &format!("Total lines: {}", lines.len()));
+
+    // ナビゲーション行のインデックスを見つける
+    let nav_index = lines.iter().position(|line| {
+        let trimmed = line.trim();
+        trimmed.contains("Enter to select")
+            || trimmed.contains("↑/↓ to navigate")
+            || trimmed.contains("Tab/Arrow keys")
+            || trimmed.contains("Esc to cancel")
+    });
+
+    let search_end = nav_index.unwrap_or(lines.len());
+    log::debug("extract_selection_options", &format!("Search end: {}", search_end));
+
+    // Claude Codeのデフォルト選択肢（除外対象）
+    let excluded_options = ["Type something.", "Chat about this", "Ask about"];
+
+    // 前から走査して選択肢を探す（ナビゲーション行まで）
+    for (i, line) in lines.iter().take(search_end).enumerate() {
+        let trimmed = line.trim();
+
+        // 選択肢のパターン: "1. Option", "2. Option" など
+        if let Some(num) = extract_option_number(trimmed) {
+            // 先頭の記号を除去してクリーンな選択肢テキストを作成
+            let cleaned = clean_option_text(trimmed);
+
+            // 除外対象の選択肢かチェック
+            let is_excluded = excluded_options.iter().any(|ex| cleaned.contains(ex));
+
+            if !is_excluded {
+                log::debug("extract_selection_options", &format!("Found option {} at {}: {}", num, i, cleaned));
+                if first_option_index.is_none() {
+                    first_option_index = Some(i);
+                }
+                options.push((num, cleaned));
+            } else {
+                log::debug("extract_selection_options", &format!("Excluded option: {}", cleaned));
+            }
+        }
+    }
+
+    log::debug("extract_selection_options", &format!("Total options found: {}", options.len()));
+
+    if options.is_empty() {
+        return String::new();
+    }
+
+    // 問題文を抽出（最初の選択肢の直前の連続する非空行ブロック）
+    let question_text = if let Some(first_idx) = first_option_index {
+        // 最初の選択肢より前の行を後ろから走査して、問題文ブロックを見つける
+        let mut question_lines: Vec<&str> = Vec::new();
+        let mut found_content = false;
+
+        for line in lines.iter().take(first_idx).rev() {
+            let trimmed = line.trim();
+
+            // 除外すべき行かチェック
+            let should_exclude = trimmed.is_empty()
+                || trimmed.starts_with("❯")
+                || trimmed.starts_with(">")
+                || trimmed.contains("Cooked for")
+                || trimmed.starts_with("───")
+                || trimmed.contains("? for shortcuts");
+
+            if should_exclude {
+                if found_content {
+                    // すでに問題文を見つけた後に除外行が来たら、そこで終了
+                    break;
+                }
+                // まだ問題文を見つけていない場合はスキップ
+                continue;
+            }
+
+            // 問題文の行を追加
+            question_lines.push(*line);
+            found_content = true;
+        }
+
+        // 元の順序に戻す
+        question_lines.reverse();
+        question_lines.join("\n")
+    } else {
+        String::new()
+    };
+
+    log::debug("extract_selection_options", &format!("Question text: {:?}", question_text));
+
+    // 結果を構築
+    let mut result = String::new();
+
+    if !question_text.is_empty() {
+        result.push_str(&question_text);
+        result.push_str("\n---\n");
+    }
+
+    // 選択肢を追加
+    for (_, opt) in &options {
+        result.push_str(opt);
+        result.push('\n');
+    }
+
+    result.trim_end().to_string()
+}
+
+/// 選択肢テキストから先頭の記号を除去
+fn clean_option_text(line: &str) -> String {
+    line.trim_start_matches(|c: char| c == '❯' || c == '>' || c == '○' || c == '●' || c == '◉' || c == ' ')
+        .trim()
+        .to_string()
+}
+
+/// 選択肢から番号を抽出
+fn extract_option_number(line: &str) -> Option<u32> {
+    // 先頭の記号（❯, >, ○, ●, ◉ など）を除去
+    let cleaned = line
+        .trim_start_matches(|c: char| c == '❯' || c == '>' || c == '○' || c == '●' || c == '◉' || c == ' ')
+        .trim();
+
+    // "1. " または "1: " のパターン
+    if let Some(first_char) = cleaned.chars().next() {
+        if first_char.is_ascii_digit() {
+            // 数字部分を抽出
+            let num_str: String = cleaned.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(num) = num_str.parse::<u32>() {
+                // 数字の後に ". " または ": " または "." があるか確認
+                let rest = cleaned.trim_start_matches(|c: char| c.is_ascii_digit());
+                if rest.starts_with(". ") || rest.starts_with(": ") || rest.starts_with(".") {
+                    return Some(num);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 行が選択肢かどうかを判定
+fn is_option_line(line: &str) -> bool {
+    // "数字. " または "数字:" のパターン（1. 2. 3. または 1: 2: 3:）
+    if let Some(first_char) = line.chars().next() {
+        if first_char.is_ascii_digit() {
+            // "1. " または "1: " または "1." のパターンを探す
+            if line.starts_with(|c: char| c.is_ascii_digit()) {
+                // 数字の後に続く文字を確認
+                let rest = line.trim_start_matches(|c: char| c.is_ascii_digit());
+                if rest.starts_with(". ") || rest.starts_with(": ") || rest.starts_with(".") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +501,39 @@ mod tests {
     fn test_poller_not_running_initially() {
         let poller = StatusPoller::new(None);
         assert!(!poller.is_running());
+    }
+
+    #[test]
+    fn test_extract_selection_options() {
+        // 基本的な選択肢（改行区切りで返される）
+        let content = "Which option?\n1. Option A\n2. Option B\n3. Option C\n\nEnter to select";
+        let result = extract_selection_options(content);
+        assert!(result.contains("1. Option A"));
+        assert!(result.contains("2. Option B"));
+        assert!(result.contains("3. Option C"));
+
+        // 選択肢がない場合
+        let content2 = "No options here\nEnter to select";
+        let result2 = extract_selection_options(content2);
+        assert!(result2.is_empty());
+
+        // 最初の選択肢が欠けている場合
+        let content3 = "2. Second\n3. Third\n\nEnter to select";
+        let result3 = extract_selection_options(content3);
+        assert!(result3.contains("※")); // 警告メッセージが含まれる
+    }
+
+    #[test]
+    fn test_extract_option_number() {
+        assert_eq!(extract_option_number("1. First"), Some(1));
+        assert_eq!(extract_option_number("2. Second"), Some(2));
+        assert_eq!(extract_option_number("10. Tenth"), Some(10));
+        assert_eq!(extract_option_number("No number"), None);
+        assert_eq!(extract_option_number("1abc"), None); // ドットがない
+
+        // 先頭に記号がある場合
+        assert_eq!(extract_option_number("❯ 1. First"), Some(1));
+        assert_eq!(extract_option_number("> 2. Second"), Some(2));
+        assert_eq!(extract_option_number("  3. Third"), Some(3)); // インデント
     }
 }

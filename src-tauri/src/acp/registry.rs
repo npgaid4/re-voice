@@ -97,7 +97,7 @@ impl AgentRegistry {
 
     /// Register a new agent
     pub fn register(&self, card: AgentCard) -> Result<(), String> {
-        let id = card.id.clone();
+        let id = card.id.clone().unwrap_or_else(|| card.name.clone());
         let mut agents = self.agents.write();
 
         if agents.contains_key(&id) {

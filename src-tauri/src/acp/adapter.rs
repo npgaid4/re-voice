@@ -259,7 +259,7 @@ pub trait AgentAdapter: Send {
     fn agent_card(&self) -> &AgentCard;
 
     /// Get agent capabilities
-    fn capabilities(&self) -> &[Capability];
+    fn capabilities(&self) -> Vec<&Capability>;
 
     /// Initialize the agent (start PTY, etc.)
     async fn initialize(&mut self) -> Result<(), AdapterError>;

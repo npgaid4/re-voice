@@ -4,64 +4,285 @@
 
 Re-Voiceおよび今後開発するすべてのAIアプリの基盤となる、マルチエージェント対応の汎用通信プロトコルを実装した。
 
+**2026-02-21 更新**: A2A (Agent-to-Agent) プロトコル準拠化完了
+
+## A2A Protocol 準拠 (v3)
+
+A2AはGoogleが策定し、Linux Foundationが管理するエージェント間通信の業界標準プロトコル。
+- **参照**: https://github.com/google/A2A
+- **プロトコルバージョン**: `0.3.0`
+
+### A2A Agent Card 構造
+
+Agent Cardはエージェントの「デジタル名刺」として機能し、以下のパスでホストされる:
+```
+https://<agent-base-url>/.well-known/agent.json
+```
+
+```typescript
+interface AgentCard {
+  // A2A 必須フィールド
+  name: string;                    // エージェント表示名
+  url: string;                     // 通信エンドポイント
+  version: string;                 // エージェントバージョン
+  protocolVersion: "0.3.0";        // A2Aプロトコルバージョン
+
+  // A2A オプションフィールド
+  description?: string;
+  provider?: { organization: string; url?: string };
+  capabilities?: {
+    streaming: boolean;
+    pushNotifications: boolean;
+    stateTransitionHistory: boolean;
+  };
+  authentication?: { schemes: string[] };
+  defaultInputModes?: string[];    // ["text/plain"]
+  defaultOutputModes?: string[];   // ["text/plain", "application/json"]
+  skills?: Skill[];                // エージェントが実行できるタスク
+
+  // 内部フィールド（A2A外）
+  id?: string;                     // 内部管理用ID
+  transport?: TransportType;       // トランスポート種別
+}
+```
+
+### Skill構造（旧Capability）
+
+```typescript
+interface Skill {
+  id: string;                      // スキルID
+  name: string;                    // 表示名
+  description?: string;
+  tags?: string[];                 // 検索用タグ
+  examples?: string[];             // 使用例
+  inputSchema?: JSONSchema;        // 入力定義
+  outputSchema?: JSONSchema;       // 出力定義
+  inputModes?: string[];
+  outputModes?: string[];
+}
+```
+
+### A2A vs 旧形式の対応
+
+| 旧フィールド | A2Aフィールド | 説明 |
+|-------------|--------------|------|
+| `capabilities` | `skills` | エージェントが実行できるタスク |
+| `id` | `id` (Optional) | 内部管理用（A2A外） |
+| `protocol` | `protocolVersion` | プロトコルバージョン |
+| - | `capabilities` | 技術的機能（streaming等） |
+| - | `provider` | 組織情報 |
+| - | `authentication` | 認証スキーム |
+
+---
+
+## ACP v3 新機能
+
+### 1. Pipeline実行 (`pipeline.rs`)
+
+複数エージェントを順次実行するパイプライン機能:
+
+```rust
+let pipeline = PipelineDefinition::new("translate-pipeline")
+    .add_stage(PipelineStage::new("translate", AgentAddress::new("translator@local")))
+    .add_stage(PipelineStage::new("review", AgentAddress::new("reviewer@local")));
+
+let execution = executor.start_execution(&pipeline_id)?;
+executor.complete_stage(&execution_id, output)?;
+```
+
+### 2. Broadcast機能 (`tmux.rs`)
+
+複数エージェントへの一斉送信:
+
+```rust
+let filter = CapabilityFilter::new()
+    .with_capabilities(vec!["translation".into()]);
+let (success, failures) = orch.broadcast_message(&content, Some(&filter))?;
+```
+
+### 3. AddressType拡張
+
+```rust
+pub enum AddressType {
+    Single { address: AgentAddress },
+    Multiple { addresses: Vec<AgentAddress> },
+    Broadcast { filter: Option<CapabilityFilter> },
+    Pipeline { stages: Vec<PipelineStage> },
+}
+```
+
+### 4. 新メッセージタイプ
+
+```rust
+pub enum MessageType {
+    // 基本
+    Prompt, Response, Stream, Error,
+    // エージェント管理
+    Discover, Advertise, Heartbeat,
+    // 制御
+    Cancel, Question, Answer,
+    // パイプライン
+    PipelineStart, PipelineStage, PipelineEnd,
+}
+```
+
+---
+
+## CLIベース実装 (v3.5)
+
+### 1. AgentState (`state_machine.rs`)
+
+```rust
+pub enum AgentState {
+    /// 初期化中
+    Initializing,
+    /// アイドル（次のタスク待ち）
+    Idle,
+    /// 処理中
+    Processing { current_tool: Option<String>, started_at: DateTime<Utc> },
+    /// 権限要求中
+    WaitingForPermission { tool_name: String, tool_input: Value, request_id: String },
+    /// ユーザー入力待ち（AskTool）
+    WaitingForInput { question: String, options: Vec<String> },
+    /// エラー
+    Error { message: String, recoverable: bool },
+    /// 完了
+    Completed { output: String },
+}
+```
+
+### 2. 状態遷移イベント
+
+```rust
+pub enum StateEvent {
+    Initialized,
+    TaskStarted { prompt: String },
+    ToolUseStarted { tool_name: String },
+    ToolUseCompleted { tool_name: String, success: bool },
+    PermissionRequired { tool_name: String, tool_input: Value, request_id: String },
+    PermissionGranted { request_id: String },
+    PermissionDenied { request_id: String, reason: String },
+    InputRequired { question: String, options: Vec<String> },
+    InputReceived { answer: String },
+    ErrorOccurred { message: String, recoverable: bool },
+    TaskCompleted { output: String },
+}
+```
+
+### 3. StreamEvent (`stream_parser.rs`)
+
+Claude Code CLIの`--print --output-format stream-json`出力をパース:
+
+```rust
+pub enum StreamEvent {
+    /// システム初期化
+    System { subtype: String, session_id: Option<String>, model: Option<String>, ... },
+    /// アシスタントメッセージ
+    Assistant { message: AssistantMessage },
+    /// ツール使用
+    ToolUse { id: String, name: String, input: Value },
+    /// ツール結果
+    ToolResult { tool_use_id: String, content: String, is_error: bool },
+    /// 最終結果
+    Result { subtype: Option<String>, result: Option<String>, is_error: bool, ... },
+    /// エラー
+    Error { error: ErrorDetail },
+}
+```
+
+### 4. 権限管理 (`permission.rs`)
+
+```rust
+pub enum PermissionPolicy {
+    ReadOnly,    // 読み取り専用（自動許可のみ）
+    Standard,    // 標準（読み取りは自動、書き込みは確認）
+    Strict,      // 厳格（全て確認）
+    Permissive,  // 自由（全て自動許可）
+}
+
+// デフォルト許可ツール（読み取り系）
+fn auto_approve_tools() -> Vec<String> {
+    vec!["Read", "Grep", "Glob", "Bash(ls:*)", "Bash(git status:*)", ...]
+}
+
+// 人間確認が必要なツール（書き込み系）
+fn require_confirmation_tools() -> Vec<String> {
+    vec!["Edit", "Write", "Bash(rm:*)", "Bash(npm:*)", ...]
+}
+```
+
+### 5. ClaudeCodeExecutor (`executor.rs`)
+
+```rust
+pub struct ClaudeCodeExecutor {
+    process: Option<Child>,
+    stdin: Option<ChildStdin>,
+    session_id: Option<String>,
+    permission_manager: Arc<Mutex<PermissionManager>>,
+    state_machine: Arc<Mutex<StateMachine>>,
+    parser: StreamParser,
+    event_tx: mpsc::Sender<ExecutorEvent>,
+}
+
+impl ClaudeCodeExecutor {
+    pub async fn start(&mut self) -> Result<()> {
+        let mut cmd = Command::new("claude");
+        cmd.args(["--print", "--output-format", "stream-json"]);
+        // --allowedTools, --resume など
+        ...
+    }
+
+    pub async fn execute(&mut self, prompt: &str) -> Result<String> {
+        // stdinにプロンプト送信
+        // 状態をProcessingに
+        // 完了を待機
+        ...
+    }
+}
+```
+
+---
+
 ## 実装済み機能
 
 ### Rustバックエンド (`src-tauri/src/acp/`)
 
 #### 1. メッセージ型 (`message.rs`)
 
-- `ACPMessage` - コアメッセージフォーマット
-  - ルーティング (from, to)
-  - ペイロード (content, data)
-  - メタデータ (priority, ttl, correlationId)
+- `ACPEnvelope` - v3エンベロープ（protocol + message + metadata）
+- `ACPMessage` - レガシーメッセージ（後方互換）
+- `ACPMessageV3` - 拡張メッセージ（AgentAddress, AddressType）
+- `AddressType` - single/multiple/broadcast/pipeline
 - `ACPFrame` - PTYトランスポート用フレーミング (`<ACP>{json}</ACP>`)
-- `MessageType` - prompt, response, broadcast, discover, advertise, error
 
-#### 2. エージェント型 (`agent.rs`)
+#### 2. エージェント型 (`agent.rs`) - A2A準拠
 
-- `AgentCard` - エージェントの識別情報
-  - ID, 名前, エンドポイント
-  - ケーパビリティ一覧
-  - トランスポート種別
-- `Capability` - 能力宣言 (ID, 名前, タグ)
-- `DiscoveryQuery` - エージェント検索クエリ
-  - ケーパビリティでフィルタ
-  - タグでフィルタ
-  - トランスポート種別でフィルタ
+- `AgentCard` - A2A準拠エージェントカード
+- `Skill` - スキル定義（旧Capability）
+- `AgentCapabilities` - 技術的機能（streaming等）
+- `Authentication` - 認証スキーム
+- `Provider` - 組織情報
+- `DiscoveryQuery` - A2A互換検索クエリ
 
-#### 3. レジストリ (`registry.rs`)
+#### 3. パイプライン (`pipeline.rs`) - NEW
+
+- `PipelineDefinition` - パイプライン定義
+- `PipelineExecution` - 実行状態管理
+- `PipelineExecutor` - 実行エンジン
+- `StageResult` - ステージ結果
+
+#### 4. レジストリ (`registry.rs`)
 
 - `AgentRegistry` - スレッドセーフなエージェント登録管理
 - ハートビート追跡
 - 古いエージェントの自動クリーンアップ
-- ケーパビリティによる検索
 
-#### 4. アダプター (`adapter.rs`)
+#### 5. tmuxオーケストレーター (`tmux.rs`)
 
-- `AgentAdapter` trait - プロトコル変換レイヤー
-- `InputConverter` trait - ACP → ネイティブCLI入力
-- `OutputConverter` trait - ネイティブCLI出力 → ACP
-- `TaskRequest`, `TaskResult` - タスク実行型
-- `SharedContext` - マルチエージェント間のコンテキスト共有
-
-#### 5. Claude Codeアダプター (`adapters/claude_code.rs`)
-
-- PTYベースのClaude Code通信
-- コンテキスト埋め込み（共有ファイル、会話履歴）
-- ANSIエスケープシーケンス除去
-- 出力パース（簡易実装）
-
-#### 6. オーケストレーター (`orchestrator.rs`)
-
-- エージェント管理（簡易版）
-- タスク状態追跡
-- 統計情報（完了タスク数、失敗数など）
-- 共有コンテキスト管理
-
-#### 7. トランスポート (`transport/pty.rs`)
-
-- PTYトランスポート実装
-- ACPフレームの送受信
+- セッション作成/破棄
+- エージェント起動（Claude Code, Codex, GenericShell）
+- **Broadcast機能** - CapabilityFilter付き一斉送信
+- **discover_agents** - フィルター付きエージェント検索
 
 ### TypeScriptフロントエンド (`src/acp/`)
 
@@ -86,6 +307,34 @@ Re-Voiceおよび今後開発するすべてのAIアプリの基盤となる、�
 - Tauri IPCトランスポート実装
 
 ### Tauriコマンド
+
+#### CLI Executor コマンド（v3.5 - 2026-02-22追加）
+
+| コマンド | 説明 |
+|---------|------|
+| `executor_start` | CLIエグゼキューター起動（working_dir, allowed_tools, session_id） |
+| `executor_execute` | タスクを実行（prompt） |
+| `executor_stop` | エグゼキューター停止 |
+| `executor_get_state` | 現在のAgentStateを取得 |
+| `executor_submit_permission` | 権限要求に回答（request_id, allow, always） |
+| `executor_is_running` | 起動状態確認 |
+
+#### ACP v3 コマンド（新規）
+
+| コマンド | 説明 |
+|---------|------|
+| `acp_define_pipeline` | パイプライン定義 |
+| `acp_execute_pipeline` | パイプライン実行 |
+| `acp_get_pipeline_status` | 実行状態取得 |
+| `acp_cancel_pipeline` | キャンセル |
+| `acp_list_pipelines` | パイプライン一覧 |
+| `acp_list_active_executions` | アクティブ実行一覧 |
+| `acp_broadcast_v3` | ブロードキャスト（CapabilityFilter対応） |
+| `acp_broadcast_to_idle` | アイドルエージェントのみ送信 |
+| `acp_discover_agents_v3` | CapabilityFilter検索 |
+| `acp_stats_v3` | 拡張統計情報 |
+
+#### ACP v2 コマンド
 
 | コマンド | 説明 |
 |---------|------|
@@ -212,39 +461,75 @@ Tauriの`State<T>`は`T: Send + Sync`を要求する。複雑なPTY構造を含�
 
 ## 次のステップ
 
-### Phase 1: MVP完成 (ACP v2)
+### 完了済み
+
+#### Phase 1: MVP完成 (ACP v2) ✅
 
 1. [x] tmux基本機能検証 (Level 0.5) - 2025-02-19完了
-   - ✅ tmux capture-pane で出力取得可能
-   - ✅ tmux send-keys -l で日本語送信可能
-   - ✅ プロンプト検知 (❯, > ) 可能
-   - ✅ Claude Code起動・操作確認
 2. [x] TmuxOrchestrator実装 - 2025-02-19完了
-   - src-tauri/src/acp/tmux.rs
 3. [x] フロントエンド統合テスト - 2025-02-19完了
-   - TmuxTestSectionコンポーネント実装
-   - 全機能の動作確認完了
 4. [x] 状態検知の完全実装 (Level 1) - 2025-02-19完了
-   - ✅ OutputParser実装 (src-tauri/src/acp/parser.rs)
-     - Processing/Idle/WaitingForInput/Error検出
-     - ANSIエスケープシーケンス処理
-   - ✅ StatusPoller実装 (src-tauri/src/acp/poller.rs)
-     - 自動ポーリング（500ms間隔）
-     - イベント発火（tmux:status_changed, tmux:output_ready）
-   - ✅ フロントエンドイベント対応
-     - イベントリスナー実装
+5. [x] 質問処理 (Level 3) - 2026-02-21完了
 
-### Phase 2: Re-Voice統合
+#### Phase 2: ACP v3 & A2A準拠 ✅ (2026-02-21完了)
+
+1. [x] ACPEnvelope導入 - message.rs
+2. [x] アドレス型拡張 - AddressType (single/multiple/broadcast/pipeline)
+3. [x] エージェントカードv3 - A2A Agent Card準拠
+4. [x] TypeScript型更新 - types.ts
+5. [x] Pipeline通信実装 - pipeline.rs新規作成
+6. [x] Broadcast実装 - tmux.rs拡張
+7. [x] 新APIコマンド追加 - lib.rs
+
+#### Phase 2.5: CLIベース移行 ✅ (2026-02-22完了)
+
+tmux画面キャプチャからCLIベース（`--print --output-format stream-json`）に移行。
+
+**解決した問題:**
+| 問題 | 解決方法 |
+|------|----------|
+| 入出力の区別不可 | stdin/stdoutが明確に分離 |
+| 状態検出の不確実性 | JSONイベントで全状態が明示 |
+| 権限プロンプト検出 | `tool_result`のエラーで検出 |
+| 完了検出 | `result`イベントで確実に検出 |
+
+**新規ファイル:**
+- `executor.rs` - ClaudeCodeExecutor（子プロセス管理）
+- `stream_parser.rs` - stream-jsonパーサー
+- `state_machine.rs` - AgentState enumと状態マシン
+- `permission.rs` - 権限管理（自動許可/人間確認）
+
+**新規Tauriコマンド:**
+| コマンド | 説明 |
+|---------|------|
+| `executor_start` | CLIエグゼキューター起動 |
+| `executor_execute` | タスク実行 |
+| `executor_stop` | 停止 |
+| `executor_get_state` | 現在の状態取得 |
+| `executor_submit_permission` | 権限要求に回答 |
+| `executor_is_running` | 起動状態確認 |
+
+**Claude Code stream-jsonイベント:**
+```json
+{"type":"system","subtype":"init",...}           // 初期化
+{"type":"assistant","message":{...}}             // 応答ストリーム
+{"type":"result","subtype":"success",...}        // 完了
+```
+
+### 進行中・予定
+
+#### Phase 3: Re-Voice統合
 
 1. [ ] 字幕翻訳ワークフローの実装
 2. [ ] 翻訳結果のVOICEVOX連携
 3. [ ] エンドツーエンドの動作確認
 
-### Phase 3: 拡張
+#### Phase 4: マルチエージェント拡張
 
-1. [ ] マルチエージェント翻訳（翻訳→品質チェック）
-2. [ ] WebSocketトランスポート
-3. [ ] エージェント発見プロトコル
+1. [ ] Pipeline UI - パイプライン定義・実行UI
+2. [ ] エージェント選択UI改善
+3. [ ] WebSocketトランスポート（リモートエージェント対応）
+4. [ ] A2A完全準拠 - HTTP/SSE通信
 
 ---
 
@@ -254,14 +539,25 @@ Tauriの`State<T>`は`T: Send + Sync`を要求する。複雑なPTY構造を含�
 src-tauri/src/
 ├── acp/
 │   ├── mod.rs           # モジュール定義・再エクスポート
-│   ├── message.rs       # ACPメッセージ型
-│   ├── agent.rs         # エージェントカード・ケーパビリティ
+│   ├── message.rs       # ACPメッセージ型（v3: Envelope, AddressType）
+│   ├── agent.rs         # A2A準拠AgentCard, Skill, Capabilities
+│   ├── pipeline.rs      # パイプライン実行エンジン
 │   ├── registry.rs      # エージェントレジストリ
 │   ├── adapter.rs       # アダプターtrait群
 │   ├── orchestrator.rs  # オーケストレーター
-│   ├── parser.rs        # NEW: 出力パーサー（状態検知）
-│   ├── poller.rs        # NEW: ステータスポーラー
-│   ├── tmux.rs          # tmuxオーケストレーター
+│   │
+│   │  # === CLIベース (v3) ===
+│   ├── executor.rs      # ClaudeCodeExecutor（子プロセス管理）
+│   ├── stream_parser.rs # stream-jsonパーサー
+│   ├── state_machine.rs # AgentState enumと状態マシン
+│   ├── permission.rs    # 権限管理（自動許可/人間確認）
+│   ├── runner.rs        # PipelineRunner（CLIベース版）
+│   │
+│   │  # === レガシー (tmuxベース) ===
+│   ├── parser.rs        # 出力パーサー（状態検知）[廃止予定]
+│   ├── poller.rs        # ステータスポーラー [廃止予定]
+│   ├── tmux.rs          # tmux + Broadcast機能 [廃止予定]
+│   │
 │   ├── adapters/
 │   │   ├── mod.rs
 │   │   └── claude_code.rs  # Claude Codeアダプター
@@ -269,12 +565,12 @@ src-tauri/src/
 │       ├── mod.rs
 │       └── pty.rs       # PTYトランスポート
 ├── pty.rs               # PTYマネージャー（既存）
-└── lib.rs               # Tauriコマンド
+└── lib.rs               # Tauriコマンド（v3追加）
 
 src/
 ├── acp/
 │   ├── index.ts         # ACPクライアント
-│   ├── types.ts         # TypeScript型定義
+│   ├── types.ts         # TypeScript型定義（A2A準拠 + AgentState）
 │   └── transport/
 │       └── index.ts     # Tauri IPCトランスポート
 └── App.tsx              # UI統合

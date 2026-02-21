@@ -130,6 +130,11 @@ impl Logger {
     pub fn error(&self, tag: &str, message: &str) {
         self.log(&format!("ERROR/{}", tag), message);
     }
+
+    /// 警告ログ
+    pub fn warn(&self, tag: &str, message: &str) {
+        self.log(&format!("WARN/{}", tag), message);
+    }
 }
 
 impl Default for Logger {
@@ -176,5 +181,12 @@ pub fn info(tag: &str, message: &str) {
 pub fn error(tag: &str, message: &str) {
     if let Ok(logger) = GLOBAL_LOGGER.lock() {
         logger.error(tag, message);
+    }
+}
+
+/// 警告ログ
+pub fn warn(tag: &str, message: &str) {
+    if let Ok(logger) = GLOBAL_LOGGER.lock() {
+        logger.warn(tag, message);
     }
 }

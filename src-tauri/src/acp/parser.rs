@@ -1,268 +1,254 @@
-//! Claude Code 出力パーサー
+//! Claude Code 出力パーサー（状態遷移ベース版）
 //!
-//! tmuxキャプチャ出力からエージェントの状態を正確に検出する。
+//! 送信前後の画面変化を検出して状態を判定する。
 
 use regex::Regex;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use super::tmux::AgentStatus;
 
-/// 出力パーサー
+/// 画面のハッシュ値を計算
+pub fn content_hash(content: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// 出力パーサー（状態遷移ベース）
 pub struct OutputParser {
-    /// プロンプトパターン（入力待ち状態を示す）
-    prompt_patterns: Vec<Regex>,
-    /// 処理中パターン
-    processing_patterns: Vec<Regex>,
-    /// 質問パターン（最後の行が質問か判定）
-    question_patterns: Vec<Regex>,
-    /// エラーパターン
-    error_patterns: Vec<Regex>,
-    /// スピナーアニメーションパターン
-    spinner_patterns: Vec<Regex>,
+    /// マーカー検出用正規表現
+    done_marker: Regex,
+    waiting_marker: Regex,
+    ask_marker: Regex,
+    error_marker: Regex,
+    file_marker: Regex,
+    /// Claude Codeの処理中表示パターン
+    tool_execution: Regex,
+    spinner_pattern: Regex,
+    thinking_pattern: Regex,
 }
 
 impl OutputParser {
     pub fn new() -> Self {
         Self {
-            prompt_patterns: vec![
-                // Claude Code プロンプト（❯ が含まれている行）
-                Regex::new(r"❯").unwrap(),
-                // 一般的なプロンプト（> で終わる行）
-                Regex::new(r">\s*$").unwrap(),
-                // 追加入力待ち（継続行）
-                Regex::new(r"\.\.\.\s*$").unwrap(),
-            ],
-            processing_patterns: vec![
-                // Thinking中
-                Regex::new(r"(?i)Thinking[.。…]*").unwrap(),
-                // Processing中
-                Regex::new(r"(?i)Processing[.。…]*").unwrap(),
-                // Working中
-                Regex::new(r"(?i)Working[.。…]*").unwrap(),
-                // 読み込み中
-                Regex::new(r"(?i)Loading[.。…]*").unwrap(),
-                // 実行中
-                Regex::new(r"(?i)Executing[.。…]*").unwrap(),
-                // 生成中
-                Regex::new(r"(?i)Generating[.。…]*").unwrap(),
-                // 日本語
-                Regex::new(r"処理中[.。…]*").unwrap(),
-                Regex::new(r"思考中[.。…]*").unwrap(),
-                Regex::new(r"生成中[.。…]*").unwrap(),
-            ],
-            question_patterns: vec![
-                // 疑問符で終わる
-                Regex::new(r"[？?]\s*$").unwrap(),
-                // 日本語の疑問語
-                Regex::new(r"[ど何いかがれの][れのがを]?[？?]?").unwrap(),
-                // 英語の疑問詞
-                Regex::new(r"(?i)(which|what|how|where|when|who|why|should|would|could|can)\s+.*\??\s*$").unwrap(),
-                // 選択肢を提示
-                Regex::new(r"\d+\.\s+.+\n\d+\.\s+.+").unwrap(),
-                // 確認を求める
-                Regex::new(r"(?i)(continue|proceed|confirm|yes|no)\??\s*$").unwrap(),
-                // 日本語で確認
-                Regex::new(r"(よろしい|よろしければ|続けます|進めます|確認)[かですて]?[？?]?\s*$").unwrap(),
-            ],
-            error_patterns: vec![
-                Regex::new(r"(?i)error[:：]\s*").unwrap(),
-                Regex::new(r"(?i)failed[:：]\s*").unwrap(),
-                Regex::new(r"(?i)exception[:：]\s*").unwrap(),
-                Regex::new(r"(?i)fatal[:：]\s*").unwrap(),
-                Regex::new(r"(?i)panic[:：]\s*").unwrap(),
-                Regex::new(r"(?i)timeout[:：]\s*").unwrap(),
-                Regex::new(r"(?i)denied[:：]\s*").unwrap(),
-                Regex::new(r"(?i)not found[:：]\s*").unwrap(),
-                Regex::new(r"エラー[:：]\s*").unwrap(),
-                Regex::new(r"失敗[:：]\s*").unwrap(),
-            ],
-            spinner_patterns: vec![
-                // Claude Codeのスピナー文字
-                Regex::new(r"[✢✳✶✻✷✸✹✺·]+").unwrap(),
-                // 一般的なスピナー
-                Regex::new(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]+").unwrap(),
-                // 動詞+ing
-                Regex::new(r"(?i)\w+ing[….]+").unwrap(),
-            ],
+            // マーカー
+            done_marker: Regex::new(r"@DONE@").unwrap(),
+            waiting_marker: Regex::new(r"@WAITING@").unwrap(),
+            ask_marker: Regex::new(r"@ASK@").unwrap(),
+            error_marker: Regex::new(r"@ERROR@").unwrap(),
+            file_marker: Regex::new(r"@FILE:([^@]+)@").unwrap(),
+            // Claude Codeの処理中表示
+            tool_execution: Regex::new(r"⏺\s*(Bash|Read|Write|Edit|Grep|Glob|Task)").unwrap(),
+            spinner_pattern: Regex::new(r"[✢✳✶✻✷✸✹✺·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]").unwrap(),
+            thinking_pattern: Regex::new(r"(?i)(Thinking|Processing|Working|Generating)[.。…]*").unwrap(),
         }
     }
 
-    /// 画面キャプチャから状態を判定
-    pub fn parse(&self, content: &str) -> AgentStatus {
-        let content_trimmed = content.trim();
+    /// Claude Codeの権限プロンプト（AskTool）を検出
+    fn is_permission_prompt(&self, content: &str) -> bool {
+        // Claude Codeの権限プロンプトの特徴的なパターン
+        // - "Do you want to proceed?"
+        // - "❯ 1. Yes" (選択肢の先頭)
+        // - "Esc to cancel" (操作ヒント)
+        let has_proceed = content.contains("Do you want to proceed") ||
+                          content.contains("requires approval");
+        let has_option = content.contains("❯ 1.") ||
+                         Regex::new(r"^\s*❯\s*1\.\s*Yes").unwrap().is_match(content);
+        let has_hint = content.contains("Esc to cancel") ||
+                       content.contains("Tab to amend");
+
+        // パターン1: "Do you want to proceed?" + "❯ 1. Yes"
+        // パターン2: "requires approval" + "❯ 1. Yes"
+        // パターン3: "Esc to cancel" + "❯ 1. Yes"
+        (has_proceed && has_option) || (has_hint && has_option)
+    }
+
+    /// 画面変化を検出して状態を判定
+    ///
+    /// # Arguments
+    /// * `current_content` - 現在の画面内容
+    /// * `previous_hash` - 送信前の画面ハッシュ（None=初回または送信前記録なし）
+    ///
+    /// # Returns
+    /// * (AgentStatus, content_hash) - 状態と現在のハッシュ
+    ///
+    /// ## 判定ロジック
+    /// - @DONE@ がある → Idle
+    /// - @WAITING@/@ASK@ がある → WaitingForInput
+    /// - @ERROR@ がある → Error
+    /// - ツール実行中(⏺) → Processing
+    /// - スピナー/Thinking → Processing
+    /// - それ以外 → Processing（マーカーがない限り完了とみなさない）
+    pub fn parse_with_change_detection(
+        &self,
+        current_content: &str,
+        previous_hash: Option<u64>,
+    ) -> (AgentStatus, u64) {
+        let current_hash = content_hash(current_content);
+        let content_trimmed = current_content.trim();
 
         // 空の場合はUnknown
         if content_trimmed.is_empty() {
-            return AgentStatus::Unknown;
+            return (AgentStatus::Unknown, current_hash);
         }
 
-        // 1. 全体的にProcessingパターンがあるかチェック（スピナー、Thinking等）
-        if self.is_processing(content_trimmed) {
-            return AgentStatus::Processing;
+        // 1. マーカーベース判定（最優先）
+
+        // AskTool（権限プロンプト）検出 - @DONE@より優先
+        if self.is_permission_prompt(content_trimmed) {
+            let question = content_trimmed.to_string();
+            return (AgentStatus::WaitingForInput { question }, current_hash);
         }
 
-        // 2. プロンプトがあるかチェック
-        let has_prompt = self.has_prompt(content_trimmed);
-
-        if has_prompt {
-            // プロンプトの直前の出力を取得
-            let last_output = self.extract_last_output(content_trimmed);
-
-            // 3. エラーチェック
-            if let Some(error_msg) = self.detect_error(&last_output) {
-                return AgentStatus::Error {
-                    message: error_msg,
-                };
-            }
-
-            // 4. 質問チェック
-            if self.is_question(&last_output) {
-                return AgentStatus::WaitingForInput {
-                    question: last_output.lines().last().unwrap_or(&last_output).to_string(),
-                };
-            }
-
-            // 5. 完了と判定（プロンプトがあるが質問でもエラーでもない）
-            return AgentStatus::Idle;
+        // エラーマーカー
+        if self.error_marker.is_match(content_trimmed) {
+            let error_msg = self.extract_error_message(content_trimmed);
+            return (AgentStatus::Error { message: error_msg }, current_hash);
         }
 
-        // 6. プロンプトがなく、Processingパターンもない → まだ処理中とみなす
-        AgentStatus::Processing
+        // 入力待ちマーカー
+        if self.waiting_marker.is_match(content_trimmed) || self.ask_marker.is_match(content_trimmed) {
+            let question = self.extract_question(content_trimmed);
+            return (AgentStatus::WaitingForInput { question }, current_hash);
+        }
+
+        // 完了マーカー
+        if self.done_marker.is_match(content_trimmed) {
+            return (AgentStatus::Idle, current_hash);
+        }
+
+        // 2. 処理中の判定
+
+        // ツール実行中表示
+        if self.tool_execution.is_match(content_trimmed) {
+            return (AgentStatus::Processing, current_hash);
+        }
+
+        // スピナー/Thinking表示
+        if self.spinner_pattern.is_match(content_trimmed) || self.thinking_pattern.is_match(content_trimmed) {
+            return (AgentStatus::Processing, current_hash);
+        }
+
+        // 3. @DONE@がない限り、Processingとみなす
+        // （以前はプロンプトがあればIdleとしていたが、これは誤判定の原因だった）
+        (AgentStatus::Processing, current_hash)
     }
 
-    /// 処理中かどうかを判定（より厳密に）
-    fn is_processing(&self, content: &str) -> bool {
-        // 最後の10行をチェック
-        let last_lines: Vec<&str> = content.lines().rev().take(10).collect();
-
-        for line in &last_lines {
-            let trimmed = line.trim();
-
-            // 空行や罫線のみの行はスキップ
-            if trimmed.is_empty() || trimmed.starts_with('─') || trimmed.starts_with('═') {
-                continue;
-            }
-
-            // Processingパターンの検出（行全体がパターンにマッチする場合のみ）
-            for pattern in &self.processing_patterns {
-                if pattern.is_match(trimmed) {
-                    return true;
-                }
-            }
-
-            // スピナーパターンの検出（短い行で、かつ明確なスピナー文字を含む場合のみ）
-            if trimmed.len() < 30 {
-                for pattern in &self.spinner_patterns {
-                    if pattern.is_match(trimmed) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
+    /// 従来のパースメソッド（後方互換用）
+    pub fn parse(&self, content: &str) -> AgentStatus {
+        let (status, _) = self.parse_with_change_detection(content, None);
+        status
     }
 
-    /// プロンプトが表示されているか
-    fn has_prompt(&self, content: &str) -> bool {
-        // 最後の数行をチェック（Claude CodeのUIでは ❯ の下に余分な行がある場合がある）
-        let last_lines: Vec<&str> = content.lines().rev().take(5).collect();
-        for line in &last_lines {
-            let trimmed = line.trim();
-            for pattern in &self.prompt_patterns {
-                if pattern.is_match(trimmed) {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// ウェルカム画面かどうか
+    fn is_welcome_screen(&self, content: &str) -> bool {
+        content.contains("Claude Code")
+            && content.contains("❯")
+            && (content.contains("for shortcuts")
+                || content.contains("Try \"")
+                || content.contains("model to try"))
     }
 
-    /// 質問かどうかを判定
-    fn is_question(&self, content: &str) -> bool {
-        // 空の場合は質問ではない
-        if content.trim().is_empty() {
-            return false;
-        }
-
-        // 最後の数行をチェック
-        let last_lines: Vec<&str> = content.lines().rev().take(5).collect();
-
-        for line in last_lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            for pattern in &self.question_patterns {
-                if pattern.is_match(trimmed) {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// まだ処理中かどうか（プロンプトがある場合の追加チェック）
+    fn is_still_processing(&self, content: &str) -> bool {
+        self.tool_execution.is_match(content)
+            || self.spinner_pattern.is_match(content)
+            || self.thinking_pattern.is_match(content)
     }
 
-    /// エラーを検出
-    fn detect_error(&self, content: &str) -> Option<String> {
-        for pattern in &self.error_patterns {
-            if let Some(captures) = pattern.captures(content) {
-                // エラーメッセージの周辺を抽出
-                if let Some(m) = captures.get(0) {
-                    let start = m.start().saturating_sub(20);
-                    let end = (m.end() + 100).min(content.len());
-                    return Some(content[start..end].to_string());
-                }
-            }
-        }
-        None
+    /// ファイルパスを抽出
+    pub fn extract_files(&self, content: &str) -> Vec<String> {
+        self.file_marker
+            .captures_iter(content)
+            .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .collect()
     }
 
-    /// 最後のプロンプトの直前の出力を抽出
-    fn extract_last_output(&self, content: &str) -> String {
-        // 最後の "> " または "❯ " の前までを抽出
-        let mut prompt_pos = None;
-
-        for pattern in &self.prompt_patterns {
-            if let Some(pos) = pattern.find(content) {
-                match prompt_pos {
-                    None => prompt_pos = Some(pos.start()),
-                    Some(existing) if pos.start() > existing => prompt_pos = Some(pos.start()),
-                    _ => {}
-                }
-            }
-        }
-
-        match prompt_pos {
-            Some(pos) => content[..pos].to_string(),
-            None => content.to_string(),
+    /// エラーメッセージを抽出
+    fn extract_error_message(&self, content: &str) -> String {
+        if let Some(pos) = content.find("@ERROR@") {
+            let after = &content[pos + 7..];
+            after
+                .lines()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string()
+        } else {
+            "Unknown error".to_string()
         }
     }
 
-    /// ANSIエスケープシーケンスを除去
-    pub fn strip_ansi(content: &str) -> String {
-        // 基本的なANSIエスケープシーケンスを除去
-        let ansi_regex = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
-        ansi_regex.replace_all(content, "").to_string()
+    /// 質問内容を抽出
+    fn extract_question(&self, content: &str) -> String {
+        let marker_pos = content.find("@WAITING@")
+            .or_else(|| content.find("@ASK@"));
+
+        if let Some(pos) = marker_pos {
+            let before = &content[..pos];
+            before
+                .lines()
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string()
+        } else {
+            String::new()
+        }
     }
 
-    /// 出力から意味のあるテキストのみを抽出
+    /// 意味のあるコンテンツを抽出（マーカー除去版）
     pub fn extract_meaningful_content(&self, content: &str) -> String {
         let stripped = Self::strip_ansi(content);
+
+        // 最後の❯より前の内容を取得
+        let lines: Vec<&str> = stripped.lines().collect();
+        let mut last_prompt_idx = None;
+        for (i, line) in lines.iter().enumerate().rev() {
+            if line.trim().starts_with("❯") || line.trim().starts_with('>') {
+                last_prompt_idx = Some(i);
+                break;
+            }
+        }
+
+        let content_lines: Vec<&str> = if let Some(idx) = last_prompt_idx {
+            stripped.lines().take(idx).collect()
+        } else {
+            stripped.lines().collect()
+        };
+
+        // マーカーを除去してクリーンなテキストを返す
+        let clean_text = content_lines
+            .iter()
+            .map(|line| {
+                let line = self.done_marker.replace_all(line, "");
+                let line = self.waiting_marker.replace_all(&line, "");
+                let line = self.ask_marker.replace_all(&line, "");
+                let line = self.error_marker.replace_all(&line, "");
+                let line = self.file_marker.replace_all(&line, "");
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         // 複数の空行を1つに
         let collapsed = Regex::new(r"\n{3,}")
             .unwrap()
-            .replace_all(&stripped, "\n\n");
+            .replace_all(&clean_text, "\n\n");
 
-        // 行末・行頭の空白を削除
-        let trimmed: String = collapsed
-            .lines()
-            .map(|line| line.trim_end())
-            .collect::<Vec<_>>()
-            .join("\n");
+        collapsed.trim().to_string()
+    }
 
-        trimmed.trim().to_string()
+    /// ANSIエスケープシーケンスを除去
+    pub fn strip_ansi(content: &str) -> String {
+        let ansi_regex = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
+        ansi_regex.replace_all(content, "").to_string()
     }
 }
 
@@ -277,61 +263,119 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_processing() {
-        let parser = OutputParser::new();
-
-        // Thinking パターン
-        let content = "Some output\nThinking...\n";
-        assert_eq!(parser.parse(content), AgentStatus::Processing);
-
-        // スピナーパターン
-        let content = "Processing request\n✢✳✶\n";
-        assert_eq!(parser.parse(content), AgentStatus::Processing);
+    fn test_content_hash_different() {
+        let hash1 = content_hash("content 1");
+        let hash2 = content_hash("content 2");
+        assert_ne!(hash1, hash2);
     }
 
     #[test]
-    fn test_detect_idle() {
-        let parser = OutputParser::new();
-
-        let content = "Task completed successfully\n❯ ";
-        assert_eq!(parser.parse(content), AgentStatus::Idle);
-
-        let content = "Here is the result\n> ";
-        assert_eq!(parser.parse(content), AgentStatus::Idle);
+    fn test_content_hash_same() {
+        let hash1 = content_hash("same content");
+        let hash2 = content_hash("same content");
+        assert_eq!(hash1, hash2);
     }
 
     #[test]
-    fn test_detect_question() {
+    fn test_no_change_returns_processing() {
+        let parser = OutputParser::new();
+        let content = "Some content\n❯ ";
+        let hash = content_hash(content);
+
+        // 同じハッシュで呼び出すとProcessing（変化なし）
+        let (status, _) = parser.parse_with_change_detection(content, Some(hash));
+        assert_eq!(status, AgentStatus::Processing);
+    }
+
+    #[test]
+    fn test_change_with_done_marker_returns_idle() {
+        let parser = OutputParser::new();
+        let old_hash = content_hash("old content");
+
+        let content = "Task done\n@DONE@\n❯ ";
+        let (status, _) = parser.parse_with_change_detection(content, Some(old_hash));
+        assert_eq!(status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn test_change_with_tool_execution_returns_processing() {
+        let parser = OutputParser::new();
+        let old_hash = content_hash("old content");
+
+        let content = "⏺ Bash(some command)\nRunning...";
+        let (status, _) = parser.parse_with_change_detection(content, Some(old_hash));
+        assert_eq!(status, AgentStatus::Processing);
+    }
+
+    #[test]
+    fn test_welcome_screen_without_marker_returns_processing() {
+        // 新しいロジック: @DONE@がない限りProcessing
+        let parser = OutputParser::new();
+        let content = r#"Claude Code v2.1.50
+❯ Try "how do I log an error?"
+  ? for shortcuts"#;
+        let hash = content_hash(content);
+
+        // ウェルカム画面でも@DONE@がなければProcessing
+        let (status, _) = parser.parse_with_change_detection(content, Some(hash));
+        assert_eq!(status, AgentStatus::Processing);
+    }
+
+    #[test]
+    fn test_extract_files() {
+        let parser = OutputParser::new();
+        let content = "Saved\n@FILE:/tmp/test.vtt@\n@DONE@";
+        let files = parser.extract_files(content);
+        assert_eq!(files, vec!["/tmp/test.vtt"]);
+    }
+
+    #[test]
+    fn test_permission_prompt_detection() {
         let parser = OutputParser::new();
 
-        let content = "Which option do you prefer?\n❯ ";
-        let result = parser.parse(content);
-        match result {
-            AgentStatus::WaitingForInput { question } => {
-                assert!(question.contains("prefer"));
-            }
-            _ => panic!("Expected WaitingForInput"),
+        // Claude Codeの権限プロンプト
+        let content = r#"mkdir -p /tmp/revoice
+   Create directory
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to tmp/
+   3. No
+
+ Esc to cancel · Tab to amend"#;
+
+        let old_hash = content_hash("old content");
+        let (status, _) = parser.parse_with_change_detection(content, Some(old_hash));
+
+        match status {
+            AgentStatus::WaitingForInput { .. } => {},
+            _ => panic!("Expected WaitingForInput, got {:?}", status),
         }
     }
 
     #[test]
-    fn test_detect_error() {
+    fn test_permission_prompt_with_requires_approval() {
         let parser = OutputParser::new();
 
-        let content = "Error: Something went wrong\n❯ ";
-        let result = parser.parse(content);
-        match result {
-            AgentStatus::Error { message } => {
-                assert!(message.contains("Error"));
-            }
-            _ => panic!("Expected Error"),
-        }
+        // "requires approval"パターン
+        let content = r#"   Execute bash command
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No"#;
+
+        assert!(parser.is_permission_prompt(content));
     }
 
     #[test]
-    fn test_strip_ansi() {
-        let content = "\x1b[32mGreen text\x1b[0m";
-        let stripped = OutputParser::strip_ansi(content);
-        assert_eq!(stripped, "Green text");
+    fn test_permission_prompt_not_detected_for_normal_output() {
+        let parser = OutputParser::new();
+
+        // 通常の出力
+        let content = "Processing your request...\n⏺ Bash(ls -la)\nDone.";
+
+        assert!(!parser.is_permission_prompt(content));
     }
 }

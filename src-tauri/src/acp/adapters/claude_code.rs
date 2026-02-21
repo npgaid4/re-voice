@@ -129,20 +129,7 @@ impl ClaudeCodeAdapter {
     /// Create a new Claude Code adapter
     pub fn new(instance_id: &str) -> Self {
         Self {
-            card: AgentCard::new(
-                format!("claude-code-{}", instance_id),
-                format!("Claude Code ({})", instance_id),
-                format!("acp://claude-code@localhost/{}", instance_id),
-                Transport::Pty,
-            )
-            .with_capabilities(vec![
-                Capability::new("translation", "Translation"),
-                Capability::new("code-generation", "Code Generation"),
-                Capability::new("code-review", "Code Review"),
-                Capability::new("analysis", "Analysis"),
-                Capability::new("writing", "Writing"),
-                Capability::new("summarization", "Summarization"),
-            ]),
+            card: AgentCard::claude_code(instance_id),
             pty: PtyManager::new(),
             input_converter: ClaudeCodeInputConverter,
             output_converter: ClaudeCodeOutputConverter::new(),
@@ -151,10 +138,10 @@ impl ClaudeCodeAdapter {
         }
     }
 
-    /// Create with custom capabilities
-    pub fn with_capabilities(instance_id: &str, capabilities: Vec<Capability>) -> Self {
+    /// Create with custom skills
+    pub fn with_capabilities(instance_id: &str, skills: Vec<Capability>) -> Self {
         let mut adapter = Self::new(instance_id);
-        adapter.card.capabilities = capabilities;
+        adapter.card.skills = Some(skills);
         adapter
     }
 
@@ -180,8 +167,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
         &self.card
     }
 
-    fn capabilities(&self) -> &[Capability] {
-        &self.card.capabilities
+    fn capabilities(&self) -> Vec<&Capability> {
+        self.card.skills.as_ref()
+            .map(|s| s.iter().collect())
+            .unwrap_or_default()
     }
 
     async fn initialize(&mut self) -> Result<(), AdapterError> {
@@ -309,7 +298,7 @@ mod tests {
     #[test]
     fn test_adapter_creation() {
         let adapter = ClaudeCodeAdapter::new("test");
-        assert_eq!(adapter.card.id, "claude-code-test");
-        assert!(adapter.capabilities().iter().any(|c| c.id == "translation"));
+        assert_eq!(adapter.card.id, Some("claude-code@localhost/test".to_string()));
+        assert!(adapter.card.skills.as_ref().map_or(false, |s| s.iter().any(|skill| skill.id == "translation")));
     }
 }

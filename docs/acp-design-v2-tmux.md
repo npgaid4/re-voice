@@ -2181,3 +2181,105 @@ ACP設計:
 1. 既存の PtyManager を維持しつつ TmuxOrchestrator を並行実装
 2. 機能完成後に tmux に完全移行
 3. フォールバック: tmux利用不可時はPTYを使用
+```
+
+---
+
+## v3: CLIベース移行 (2026-02-22)
+
+tmux画面キャプチャベースのパーサーには根本的な問題があったため、CLIベース（`--print --output-format stream-json`）に移行した。
+
+### v2（tmuxベース）の問題点
+
+| 問題 | 説明 |
+|------|------|
+| 画面スクロール | 古いマーカーが残り、誤検出の原因 |
+| 入出力の区別不可 | 自分の入力とClaude Codeの出力が混在 |
+| 状態検出の不確実性 | `@DONE@`のみに依存、権限プロンプト検出が不安定 |
+
+### v3（CLIベース）の解決策
+
+| 問題 | 解決方法 |
+|------|----------|
+| 入出力の区別 | stdin/stdoutが明確に分離 |
+| 状態検出 | JSONイベントで全状態が明示される |
+| 権限プロンプト | `tool_result`のエラーで検出 + 自動/手動応答 |
+| 完了検出 | `result`イベントで確実に検出 |
+
+### アーキテクチャ
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Re-Voice App                          │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │              ClaudeCodeExecutor                     │ │
+│  │                                                     │ │
+│  │   子プロセス → JSON Parser → State Manager         │ │
+│  │       ↑           ↓             ↓                  │ │
+│  │    stdin      Parsed Events   AgentState          │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │            Permission Manager                       │ │
+│  │   - 事前許可リスト (--allowedTools)                 │ │
+│  │   - 実行時権限要求処理                              │ │
+│  │   - 人間へのエスカレーション                        │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 新規ファイル
+
+| ファイル | 内容 |
+|---------|------|
+| `executor.rs` | ClaudeCodeExecutor - 子プロセス管理 |
+| `stream_parser.rs` | stream-jsonパーサー |
+| `state_machine.rs` | 状態マシン |
+| `permission.rs` | 権限管理 |
+
+### stream-jsonイベントと状態の対応
+
+| イベントタイプ | 検出される状態 |
+|---------------|---------------|
+| `system/init` | Idle |
+| `assistant` | Processing |
+| `tool_use` | Processing (ツール実行中) |
+| `tool_result` (is_error=true) | WaitingForPermission または Error |
+| `result` | Completed |
+
+### 権限ポリシー
+
+```rust
+pub enum PermissionPolicy {
+    ReadOnly,    // 読み取り専用（自動許可のみ）
+    Standard,    // 標準（読み取りは自動、書き込みは確認）
+    Strict,      // 厳格（全て確認）
+    Permissive,  // 自由（全て自動許可）
+}
+```
+
+**デフォルト許可ツール（読み取り系）:**
+- Read, Grep, Glob
+- Bash(ls:*), Bash(cat:*), Bash(git status:*)
+
+**人間確認が必要なツール（書き込み系）:**
+- Edit, Write
+- Bash(rm:*), Bash(mv:*), Bash(npm:*)
+
+### 新規Tauriコマンド
+
+| コマンド | 説明 |
+|---------|------|
+| `executor_start` | CLIエグゼキューター起動 |
+| `executor_execute` | タスクを実行 |
+| `executor_stop` | 停止 |
+| `executor_get_state` | 現在の状態を取得 |
+| `executor_submit_permission` | 権限要求に回答 |
+| `executor_is_running` | 起動状態確認 |
+
+### レガシーファイル（廃止予定）
+
+- `tmux.rs` - tmuxベースのオーケストレーター
+- `poller.rs` - ステータスポーラー
+- `parser.rs` - 画面キャプチャベースのパーサー

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { ACPClient, AgentCard, OrchestratorStats } from "./acp";
+import PipelineRunner from "./components/PipelineRunner";
 import "./App.css";
 
 // ============================================================================
@@ -16,6 +17,24 @@ interface TmuxAgent {
   status: string;
 }
 
+// 質問イベントの型
+interface QuestionEvent {
+  agent_id: string;
+  question: string;
+  question_id: string;
+  context: string;
+}
+
+// 質問ダイアログの状態
+interface QuestionDialogState {
+  visible: boolean;
+  agent_id: string;
+  question: string;
+  question_id: string;
+  context: string;
+  userInput: string;
+}
+
 function TmuxTestSection({ addOutput }: { addOutput: (text: string) => void }) {
   const [sessionCreated, setSessionCreated] = useState(false);
   const [agents, setAgents] = useState<TmuxAgent[]>([]);
@@ -23,6 +42,16 @@ function TmuxTestSection({ addOutput }: { addOutput: (text: string) => void }) {
   const [message, setMessage] = useState("");
   const [capturedOutput, setCapturedOutput] = useState("");
   const [polling, setPolling] = useState(false);
+
+  // 質問ダイアログの状態
+  const [questionDialog, setQuestionDialog] = useState<QuestionDialogState>({
+    visible: false,
+    agent_id: "",
+    question: "",
+    question_id: "",
+    context: "",
+    userInput: "",
+  });
 
   // イベントリスナー登録（状態変化と出力準備完了）
   useEffect(() => {
@@ -60,6 +89,32 @@ function TmuxTestSection({ addOutput }: { addOutput: (text: string) => void }) {
         if (agent_id === selectedAgent) {
           setCapturedOutput(content);
         }
+      }
+    ).then((unlisten) => {
+      if (mounted) {
+        unlisteners.push(unlisten);
+      } else {
+        unlisten();
+      }
+    });
+
+    // 質問イベント（Level 3: 質問処理）
+    listen<QuestionEvent>(
+      "tmux:question",
+      (event) => {
+        if (!mounted) return;
+        const { agent_id, question, question_id, context } = event.payload;
+        addOutput(`[TMUX EVENT] Question from ${agent_id}: ${question}`);
+
+        // 質問ダイアログを表示
+        setQuestionDialog({
+          visible: true,
+          agent_id,
+          question,
+          question_id,
+          context,
+          userInput: "",
+        });
       }
     ).then((unlisten) => {
       if (mounted) {
@@ -200,6 +255,44 @@ function TmuxTestSection({ addOutput }: { addOutput: (text: string) => void }) {
     }
   };
 
+  // 質問に回答（Level 3: 質問処理）
+  const handleAnswerQuestion = async () => {
+    if (!questionDialog.userInput.trim()) {
+      addOutput("[QUESTION] 入力が空です");
+      return;
+    }
+
+    try {
+      await invoke("tmux_answer_question", {
+        agentId: questionDialog.agent_id,
+        answer: questionDialog.userInput,
+      });
+      addOutput(`[QUESTION] 回答を送信: ${questionDialog.userInput}`);
+      setQuestionDialog({
+        visible: false,
+        agent_id: "",
+        question: "",
+        question_id: "",
+        context: "",
+        userInput: "",
+      });
+    } catch (e) {
+      addOutput(`[QUESTION] エラー: ${e}`);
+    }
+  };
+
+  // 質問ダイアログを閉じる
+  const handleCloseQuestionDialog = () => {
+    setQuestionDialog({
+      visible: false,
+      agent_id: "",
+      question: "",
+      question_id: "",
+      context: "",
+      userInput: "",
+    });
+  };
+
   return (
     <section className="section-card tmux-test">
       <h2>tmux テスト (ACP v2 PoC)</h2>
@@ -283,6 +376,82 @@ function TmuxTestSection({ addOutput }: { addOutput: (text: string) => void }) {
             <code>tmux attach -t revoice</code> でターミナルから確認できます
           </div>
         </>
+      )}
+
+      {/* 質問ダイアログ（Level 3: 質問処理） */}
+      {questionDialog.visible && (
+        <div className="dialog-overlay">
+          <div className="dialog question-dialog">
+            <h3>エージェントからの質問</h3>
+            <div className="dialog-agent">
+              <strong>エージェント:</strong> {questionDialog.agent_id}
+            </div>
+            <div className="dialog-question">
+              {/* 問題文と選択肢を分割して表示 */}
+              {(() => {
+                const parts = questionDialog.question.split("\n---\n");
+                const questionText = parts.length > 1 ? parts[0] : "";
+                const optionsText = parts.length > 1 ? parts[1] : questionDialog.question;
+
+                return (
+                  <>
+                    {/* 問題文（あれば表示） */}
+                    {questionText && (
+                      <div className="question-text-wrapper">
+                        <p className="question-text">{questionText}</p>
+                      </div>
+                    )}
+                    {/* 選択肢をボタンで表示 */}
+                    {optionsText.includes("\n") ? (
+                      <div className="options-section">
+                        <strong>選択肢:</strong>
+                        <div className="option-buttons">
+                          {optionsText.split("\n").map((option, index) => (
+                            <button
+                              key={index}
+                              className={`option-btn ${questionDialog.userInput === option.replace(/^\d+\.\s*/, "") ? "selected" : ""}`}
+                              onClick={() => {
+                                // 番号を除去して回答を設定
+                                const answer = option.replace(/^\d+\.\s*/, "");
+                                setQuestionDialog({ ...questionDialog, userInput: answer });
+                              }}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="question-text">{optionsText}</p>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+            <div className="dialog-input">
+              <input
+                type="text"
+                placeholder="回答を入力するか、上の選択肢をクリック..."
+                value={questionDialog.userInput}
+                onChange={(e) => setQuestionDialog({ ...questionDialog, userInput: e.target.value })}
+                onKeyDown={(e) => e.key === "Enter" && handleAnswerQuestion()}
+                autoFocus
+              />
+            </div>
+            <div className="dialog-buttons">
+              <button
+                onClick={handleAnswerQuestion}
+                disabled={!questionDialog.userInput.trim()}
+                className="btn-primary"
+              >
+                回答を送信
+              </button>
+              <button onClick={handleCloseQuestionDialog} className="btn-secondary">
+                スキップ
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -942,6 +1111,9 @@ function App() {
 
       {/* ==================== tmuxテスト (ACP v2 PoC) ==================== */}
       <TmuxTestSection addOutput={addOutput} />
+
+      {/* ==================== 字幕翻訳パイプライン (Phase 3) ==================== */}
+      <PipelineRunner addOutput={addOutput} />
 
       {/* ==================== 入力要求ダイアログ ==================== */}
       {inputDialog.visible && (

@@ -1,0 +1,495 @@
+/**
+ * PipelineRunner Component Styles
+ */
+
+.pipeline-runner {
+  position: relative;
+}
+
+/* VOICEVOX Status */
+.voicevox-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 0.9em;
+  margin-bottom: 16px;
+}
+
+.voicevox-status.running {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.voicevox-status.stopped {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.voicevox-status.running .status-dot {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Input Row */
+.pipeline-runner .input-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* Progress Section */
+.progress-section {
+  margin: 20px 0;
+  padding: 16px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.progress-bar {
+  height: 20px;
+  background-color: #e9ecef;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.3s ease, background-color 0.3s ease;
+  border-radius: 10px;
+}
+
+.progress-message {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: #6c757d;
+}
+
+/* Execution Status */
+.execution-status {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+}
+
+.status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.status-badge.running {
+  background-color: #cce5ff;
+  color: #004085;
+}
+
+.status-badge.completed {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.status-badge.failed {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.status-badge.cancelled {
+  background-color: #e2e3e5;
+  color: #383d41;
+}
+
+.execution-id {
+  font-size: 0.8em;
+  color: #6c757d;
+  font-family: monospace;
+}
+
+/* Stage List */
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stage-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  border-left: 4px solid #6c757d;
+}
+
+.stage-item.completed {
+  border-left-color: #28a745;
+}
+
+.stage-item.running {
+  border-left-color: #007bff;
+  background-color: #e7f1ff;
+}
+
+.stage-item.failed {
+  border-left-color: #dc3545;
+  background-color: #fdf2f2;
+}
+
+.stage-item.skipped {
+  border-left-color: #6c757d;
+  opacity: 0.6;
+}
+
+.stage-number {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #dee2e6;
+  border-radius: 50%;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.stage-item.completed .stage-number {
+  background-color: #28a745;
+  color: white;
+}
+
+.stage-item.running .stage-number {
+  background-color: #007bff;
+  color: white;
+}
+
+.stage-item.failed .stage-number {
+  background-color: #dc3545;
+  color: white;
+}
+
+.stage-item .stage-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.stage-item .stage-status {
+  font-size: 0.85em;
+  color: #6c757d;
+  text-transform: capitalize;
+}
+
+.stage-item .stage-error {
+  font-size: 0.8em;
+  color: #dc3545;
+  margin-top: 4px;
+  width: 100%;
+}
+
+/* Hint */
+.pipeline-runner .hint {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background-color: #fff3cd;
+  border-radius: 8px;
+  font-size: 0.9em;
+}
+
+.pipeline-runner .hint ol {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+}
+
+.pipeline-runner .hint li {
+  margin: 4px 0;
+}
+
+/* Button styles */
+.pipeline-runner .btn-primary {
+  background-color: #007bff;
+  color: white;
+}
+
+.pipeline-runner .btn-primary:hover:not(:disabled) {
+  background-color: #0056b3;
+}
+
+.pipeline-runner .btn-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.pipeline-runner .btn-danger:hover:not(:disabled) {
+  background-color: #c82333;
+}
+
+.pipeline-runner .btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.pipeline-runner .btn-secondary:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+.pipeline-runner button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Status Row */
+.status-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.executor-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 0.9em;
+}
+
+.executor-status.running {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.executor-status.stopped {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.executor-status.running .status-dot {
+  animation: pulse 2s infinite;
+}
+
+/* Stage Indicators */
+.stage-indicators {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+  gap: 8px;
+}
+
+.stage-indicator {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background-color: #e9ecef;
+  transition: all 0.3s ease;
+}
+
+.stage-indicator.active {
+  background-color: #cce5ff;
+}
+
+.stage-indicator.completed {
+  background-color: #d4edda;
+}
+
+.stage-indicator .stage-num {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #6c757d;
+  color: white;
+  border-radius: 50%;
+  font-size: 0.9em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.stage-indicator.active .stage-num {
+  background-color: #007bff;
+}
+
+.stage-indicator.completed .stage-num {
+  background-color: #28a745;
+}
+
+.stage-indicator .stage-label {
+  font-size: 0.75em;
+  text-align: center;
+  color: #495057;
+}
+
+/* Generated Files */
+.generated-files {
+  margin-top: 20px;
+  padding: 16px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+}
+
+.generated-files h3 {
+  margin: 0 0 12px 0;
+  font-size: 1em;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: white;
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+}
+
+.file-icon {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.file-icon.vtt {
+  background-color: #cce5ff;
+  color: #004085;
+}
+
+.file-icon.json {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.file-icon.wav {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.file-name {
+  font-weight: 500;
+}
+
+.file-path {
+  font-size: 0.85em;
+  color: #6c757d;
+  font-family: monospace;
+  margin-left: auto;
+}
+
+/* Audio Files */
+.audio-files {
+  margin-top: 16px;
+}
+
+.audio-files h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.9em;
+  color: #495057;
+}
+
+.audio-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.audio-btn {
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid #dee2e6;
+  background-color: white;
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.2s ease;
+}
+
+.audio-btn:hover {
+  background-color: #e9ecef;
+}
+
+.audio-btn.playing {
+  background-color: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.more-count {
+  padding: 6px 12px;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
+/* Permission Dialog */
+.permission-dialog {
+  min-width: 400px;
+  max-width: 500px;
+}
+
+.permission-dialog .dialog-tool {
+  margin-bottom: 12px;
+}
+
+.permission-dialog .dialog-input {
+  margin-bottom: 16px;
+}
+
+.permission-dialog .dialog-input pre {
+  background-color: #f8f9fa;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.permission-dialog .dialog-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Note */
+.pipeline-runner .hint .note {
+  margin-top: 8px;
+  font-size: 0.85em;
+  color: #856404;
+}
